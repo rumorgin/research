@@ -17,8 +17,8 @@ def get_command_line_parser():
     parser.add_argument('-dataroot', type=str, default=DATA_DIR)
 
     # about pre-training
-    parser.add_argument('-epochs_base', type=int, default=100)
-    parser.add_argument('-epochs_new', type=int, default=100)
+    parser.add_argument('-epochs_base', type=int, default=1)
+    parser.add_argument('-epochs_new', type=int, default=1)
     parser.add_argument('-lr_base', type=float, default=0.1)
     parser.add_argument('-lr_new', type=float, default=0.1)
     parser.add_argument('-schedule', type=str, default='Step',
@@ -41,14 +41,14 @@ def get_command_line_parser():
 
     # for episode learning
     parser.add_argument('-train_episode', type=int, default=50)
-    parser.add_argument('-episode_shot', type=int, default=1)
-    parser.add_argument('-episode_way', type=int, default=15)
-    parser.add_argument('-episode_query', type=int, default=15)
+    parser.add_argument('-episode_shot', type=int, default=5)
+    parser.add_argument('-episode_way', type=int, default=5)
+    parser.add_argument('-episode_query', type=int, default=10)
 
     # for cec
     parser.add_argument('-lrg', type=float, default=0.1) #lr for graph attention network
-    parser.add_argument('-low_shot', type=int, default=1)
-    parser.add_argument('-low_way', type=int, default=15)
+    parser.add_argument('-low_shot', type=int, default=5)
+    parser.add_argument('-low_way', type=int, default=5)
 
     parser.add_argument('-start_session', type=int, default=0)
     parser.add_argument('-model_dir', type=str, default=MODEL_DIR, help='loading model parameter from a specific dir')

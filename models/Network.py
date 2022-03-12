@@ -1,52 +1,83 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from models.base.Network import MYNET as Net
 import numpy as np
+from models.resnet18_encoder import *
+from models.resnet20_cifar import *
 
-class MYNET(Net):
+class MYNET(nn.Module):
 
     def __init__(self, args, mode=None):
-        super().__init__(args,mode)
+        super().__init__()
 
+        self.mode = mode
+        self.args = args
+        # self.num_features = 512
+        if self.args.dataset in ['cifar100']:
+            self.encoder = resnet20()
+            self.num_features = 64
+        if self.args.dataset in ['mini_imagenet']:
+            self.encoder = resnet18(False, args)  # pretrained=False
+            self.num_features = 512
+        if self.args.dataset == 'cub200':
+            self.encoder = resnet18(True, args)  # pretrained=True follow TOPIC, models for cub is imagenet pre-trained. https://github.com/xyutao/fscil/issues/11#issuecomment-687548790
+            self.num_features = 512
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+        self.fc = nn.Linear(self.num_features, self.args.num_classes, bias=False)
 
         hdim=self.num_features
         self.slf_attn = MultiHeadAttention(1, hdim, hdim, hdim, dropout=0.5)
+
+    def encode(self, x):
+        x = self.encoder(x)
+        x = F.adaptive_avg_pool2d(x, 1)
+        x = x.squeeze(-1).squeeze(-1)
+        return x
 
     def forward(self, input):
         if self.mode == 'encoder':
             input = self.encode(input)
             return input
+        elif self.mode == 'classify':
+            logits = self.fc(input)
+            return logits
         else:
             support_idx, query_idx = input
             logits = self._forward(support_idx, query_idx)
             return logits
 
-    def _forward(self, support,query):
-        emb_dim = support.size(-1)
-        # get mean of the support
-        proto = support.mean(dim=1)
-        num_batch = proto.shape[0]
-        num_proto = proto.shape[1]
-        num_query = query.shape[1]*query.shape[2]#num of query*way
+    def _forward(self, proto,query):
 
-        # query: (num_batch, num_query, num_proto, num_emb)
-        # proto: (num_batch, num_proto, num_emb)
-        query = query.view(-1, emb_dim).unsqueeze(1)
+        feature_dim=proto.shape[-1]
+        proto=proto.reshape(-1,feature_dim)
+        query=query.reshape(-1,feature_dim)
 
-        proto = proto.unsqueeze(1).expand(num_batch, num_query, num_proto, emb_dim).contiguous()
-        proto = proto.view(num_batch*num_query, num_proto, emb_dim)
-
-        combined = torch.cat([proto, query], 1) # Nk x (N + 1) x d, batch_size = NK
-        combined = self.slf_attn(combined, combined, combined)
-        # compute distance for all batches
-        proto, query = combined.split(num_proto, 1)
-
-        logits=F.cosine_similarity(query,proto,dim=-1)
+        logits=euclidean_dist(query,proto)
         logits=logits*self.args.temperature
 
         return logits
 
+
+    def get_logits(self,x,fc):
+        if 'dot' in self.args.new_mode:
+            return F.linear(x,fc)
+        elif 'cos' in self.args.new_mode:
+            return self.args.temperature * F.linear(F.normalize(x, p=2, dim=-1), F.normalize(fc, p=2, dim=-1))
+
+
+def euclidean_dist(x, y):
+    # x: N x D
+    # y: M x D
+    n = x.size(0)
+    m = y.size(0)
+    d = x.size(1)
+    assert d == y.size(1)
+
+    x = x.unsqueeze(1).expand(n, m, d)
+    y = y.unsqueeze(0).expand(n, m, d)
+
+    return torch.pow(x - y, 2).sum(2)
 
 class ScaledDotProductAttention(nn.Module):
     ''' Scaled Dot-Product Attention '''

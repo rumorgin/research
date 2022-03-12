@@ -131,3 +131,6 @@ dmypy.json
 .idea/
 params/
 data/
+/checkpoint/
+/avalanche/
+/tb_data/
