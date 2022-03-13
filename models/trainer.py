@@ -249,33 +249,21 @@ class FSCILTrainer(object):
         tl = Averager()
         ta = Averager()
 
+        if session == 0:
+            num_class = 60
+        else:
+            num_class = 5
+        model.module.fc = nn.Linear(in_features=512, out_features=num_class).cuda()
+
         tqdm_gen = tqdm(trainloader)
 
-        # label = torch.arange(args.episode_way).repeat(args.episode_query)
-        # label = label.type(torch.cuda.LongTensor)
 
         for i, batch in enumerate(tqdm_gen, 1):
             data, label = [_.cuda() for _ in batch]
 
             model.module.mode = 'encoder'
             data = model(data)
-            # k = args.episode_way * args.episode_shot
-            #
-            # proto, query = data[:k], data[k:]
-            #
-            # proto = proto.view(args.episode_shot, args.episode_way, proto.shape[-1])
-            # query = query.view(args.episode_query, args.episode_way, query.shape[-1])
-            #
-            #
-            # proto = proto.mean(0).unsqueeze(0)
-
-            # logits = model.module._forward(proto, query)
             model.module.mode = 'classify'
-            if session==0:
-                num_class=60
-            else:
-                num_class=5
-            model.module.fc = nn.Linear(in_features=data.shape[-1],out_features=num_class).cuda()
             logits = model.module.forward(data)
 
             total_loss = F.cross_entropy(logits, label)
@@ -299,22 +287,19 @@ class FSCILTrainer(object):
         model = model.eval()
         vl = Averager()
         va = Averager()
+        if session == 0:
+            num_class = 60
+        else:
+            num_class = 5*session+60
+        model.module.fc = nn.Linear(in_features=512, out_features=num_class).cuda()
         with torch.no_grad():
             for i, batch in enumerate(testloader, 1):
                 data, test_label = [_.cuda() for _ in batch]
 
                 model.module.mode = 'encoder'
                 data = model(data)
-                k = args.episode_way * args.episode_shot
-
-                proto, query = data[:k], data[k:]
-
-                proto = proto.view(args.episode_shot, args.episode_way, proto.shape[-1])
-                query = query.view(args.episode_query, args.episode_way, query.shape[-1])
-
-                proto = proto.mean(0).unsqueeze(0)
-
-                logits = model.module._forward(proto, query)
+                model.module.mode = 'classify'
+                logits = model.module.forward(data)
 
                 loss = F.cross_entropy(logits, test_label)
                 acc = count_acc(logits, test_label)
