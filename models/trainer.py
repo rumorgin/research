@@ -29,7 +29,6 @@ class FSCILTrainer(object):
         self.trlog['max_acc'] = [0.0] * args.sessions
 
         self.set_save_path()
-        # self.set_up_model()
         self.model = MYNET(self.args, mode=self.args.base_mode)
         self.model = nn.DataParallel(self.model, list(range(self.args.num_gpu)))
         self.model = self.model.cuda()
@@ -44,20 +43,13 @@ class FSCILTrainer(object):
             self.best_model_dict = deepcopy(self.model.state_dict())
         pass
 
-    def set_up_model(self):
-        self.model = MYNET(self.args, mode=self.args.base_mode)
-        print(MYNET)
-        self.model = nn.DataParallel(self.model, list(range(self.args.num_gpu)))
-        self.model = self.model.cuda()
-
-        if self.args.model_dir != None:  #
-            print('Loading init parameters from: %s' % self.args.model_dir)
-            self.best_model_dict = torch.load(self.args.model_dir)['params']
-        else:
-            print('*********WARNINGl: NO INIT MODEL**********')
-            # raise ValueError('You must initialize a pre-trained model')
-            pass
-
+    def update_param(self, model, pretrained_dict):
+        model_dict = model.state_dict()
+        pretrained_dict = {k: v for k, v in pretrained_dict.items()}
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+        model_dict.update(pretrained_dict)
+        model.load_state_dict(model_dict)
+        return model
 
     def get_dataloader(self, session):
         if session == 0:
@@ -85,7 +77,8 @@ class FSCILTrainer(object):
             testset = self.args.Dataset.MiniImageNet(root=self.args.dataroot, train=False, index=class_index)
 
         # DataLoader(test_set, batch_sampler=sampler, num_workers=8, pin_memory=True)
-        sampler = CategoriesSampler(trainset.targets, self.args.train_episode, self.args.episode_way,
+        num_batch=(self.args.episode_shot + self.args.episode_query)*self.args.episode_way
+        sampler = CategoriesSampler(trainset.targets, len(trainset)//num_batch+1, self.args.episode_way,
                                     self.args.episode_shot + self.args.episode_query)
 
         trainloader = torch.utils.data.DataLoader(dataset=trainset, batch_sampler=sampler, num_workers=8,
