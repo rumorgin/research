@@ -6,7 +6,7 @@ from utils import *
 
 MODEL_DIR=None
 DATA_DIR = 'data/'
-PROJECT='finetune' # cec base
+PROJECT='micro_cluster' # cec base micro_cluster finetune
 
 def get_command_line_parser():
     parser = argparse.ArgumentParser()
@@ -42,9 +42,9 @@ def get_command_line_parser():
 
     # for episode learning
     parser.add_argument('-train_episode', type=int, default=50)
-    parser.add_argument('-episode_shot', type=int, default=5)
+    parser.add_argument('-episode_shot', type=int, default=10)
     parser.add_argument('-episode_way', type=int, default=5)
-    parser.add_argument('-episode_query', type=int, default=5)
+    parser.add_argument('-episode_query', type=int, default=10)
 
     # for cec
     parser.add_argument('-lrg', type=float, default=0.1) #lr for graph attention network
@@ -60,6 +60,7 @@ def get_command_line_parser():
     parser.add_argument('-num_workers', type=int, default=0)
     parser.add_argument('-seed', type=int, default=1)
     parser.add_argument('-debug', action='store_true')
+    parser.add_argument('-use_gpu',type=bool,default=False)
 
     return parser
 
@@ -69,7 +70,8 @@ if __name__ == '__main__':
     args = parser.parse_args()
     set_seed(args.seed)
     pprint(vars(args))
-    args.num_gpu = set_gpu(args)
+    if args.use_gpu:
+        args.num_gpu = set_gpu(args)
 
     trainer = importlib.import_module('models.%s.fscil_trainer' % (args.project)).FSCILTrainer(args)
     # trainer=FSCILTrainer(args)

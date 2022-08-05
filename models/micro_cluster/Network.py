@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from models.resnet18_encoder import *
 from models.resnet20_cifar import *
-
+from models.cvae.CVAE_Network import CVAE
 
 class MYNET(nn.Module):
 
@@ -25,6 +25,9 @@ class MYNET(nn.Module):
             self.encoder = resnet18(True, args)  # pretrained=True follow TOPIC, models for cub is imagenet pre-trained. https://github.com/xyutao/fscil/issues/11#issuecomment-687548790
             self.num_features = 512
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+
+        self.memory = nn.Parameter(torch.Tensor(self.args.num_classes, 2))
+        self.cvae = CVAE()
 
         self.fc = nn.Linear(self.num_features, self.args.num_classes, bias=False)
 
@@ -46,44 +49,61 @@ class MYNET(nn.Module):
         return x
 
     def forward(self, input):
-        if self.mode != 'encoder':
+        if self.mode == 'cos_classify':
             input = self.forward_metric(input)
             return input
         elif self.mode == 'encoder':
             input = self.encode(input)
             return input
+        elif self.mode == 'metric_classify':
+            k = self.args.episode_way * self.args.episode_shot
+            support, query = input[:k], input[k:]
+            support = support.view(self.args.episode_shot, self.args.episode_way, support.shape[-1])
+            query = query.view(self.args.episode_query, self.args.episode_way, query.shape[-1])
+            logits = self.metric_classify(support, query)
+            return logits
         else:
             raise ValueError('Unknown mode')
 
+    def metric_classify(self, support,query):
+        # support: (num_sample, num_class, num_emb)
+        # query: (num_sample, num_class, num_emb)
+
+        emb_dim = support.size(-1)
+        # get mean of the support
+
+        num_sample = support.shape[0]
+        num_class = support.shape[1]
+        num_query = query.shape[0]*query.shape[1]#num of query*way
+
+        proto = support.mean(dim=0)
+        query = query.view(-1, emb_dim).unsqueeze(1)
+
+        proto = proto.unsqueeze(0).expand( num_query, num_class, emb_dim).contiguous()
+
+        logits=F.cosine_similarity(query,proto,dim=-1)
+        logits=logits*self.args.temperature
+
+        return logits
+
     def update_fc(self,dataloader,class_list,session):
         for batch in dataloader:
-            if self.args.use_gpu == True:
+            if self.args.use_gpu:
                 data, label = [_.cuda() for _ in batch]
+                new_fc = nn.Parameter(
+                    torch.rand(len(class_list), self.num_features, device="cuda"),
+                    requires_grad=True)
             else:
                 data, label = [_ for _ in batch]
+                new_fc = nn.Parameter(
+                    torch.rand(len(class_list), self.num_features),requires_grad=True)
             data=self.encode(data).detach()
 
-        if self.args.not_data_init:
-            new_fc = nn.Parameter(
-                torch.rand(len(class_list), self.num_features, device="cuda"),
-                requires_grad=True)
-            nn.init.kaiming_uniform_(new_fc, a=math.sqrt(5))
-        else:
-            new_fc = self.update_fc_avg(data, label, class_list)
+
+        nn.init.kaiming_uniform_(new_fc, a=math.sqrt(5))
 
         if 'ft' in self.args.new_mode:  # further finetune
             self.update_fc_ft(new_fc,data,label,session)
-
-    def update_fc_avg(self,data,label,class_list):
-        new_fc=[]
-        for class_index in class_list:
-            data_index=(label==class_index).nonzero().squeeze(-1)
-            embedding=data[data_index]
-            proto=embedding.mean(0)
-            new_fc.append(proto)
-            self.fc.weight.data[class_index]=proto
-        new_fc=torch.stack(new_fc,dim=0)
-        return new_fc
 
     def get_logits(self,x,fc):
         if 'dot' in self.args.new_mode:

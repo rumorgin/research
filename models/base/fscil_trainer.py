@@ -16,8 +16,8 @@ class FSCILTrainer(Trainer):
         self.args = set_up_datasets(self.args)
 
         self.model = MYNET(self.args, mode=self.args.base_mode)
-        self.model = nn.DataParallel(self.model, list(range(self.args.num_gpu)))
-        self.model = self.model.cuda()
+        # self.model = nn.DataParallel(self.model, list(range(self.args.num_gpu)))
+        # self.model = self.model.cuda()
 
         if self.args.model_dir is not None:
             print('Loading init parameters from: %s' % self.args.model_dir)

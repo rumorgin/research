@@ -8,7 +8,6 @@ from utils import *
 from dataloader.data_utils import *
 from .Network import MYNET
 
-
 class FSCILTrainer(Trainer):
     def __init__(self, args):
 
@@ -22,8 +21,8 @@ class FSCILTrainer(Trainer):
     def set_up_model(self):
         self.model = MYNET(self.args, mode=self.args.base_mode)
         print(MYNET)
-        self.model = nn.DataParallel(self.model, list(range(self.args.num_gpu)))
-        self.model = self.model.cuda()
+        # self.model = nn.DataParallel(self.model, list(range(self.args.num_gpu)))
+        # self.model = self.model.cuda()
 
         if self.args.model_dir != None:  #
             print('Loading init parameters from: %s' % self.args.model_dir)
@@ -139,8 +138,8 @@ class FSCILTrainer(Trainer):
 
     def get_optimizer_base(self):
 
-        optimizer = torch.optim.SGD([{'params': self.model.module.encoder.parameters(), 'lr': self.args.lr_base},
-                                     {'params': self.model.module.slf_attn.parameters(), 'lr': self.args.lrg}],
+        optimizer = torch.optim.SGD([{'params': self.model.encoder.parameters(), 'lr': self.args.lr_base},
+                                     {'params': self.model.slf_attn.parameters(), 'lr': self.args.lrg}],
                                     momentum=0.9, nesterov=True, weight_decay=self.args.decay)
 
         if self.args.schedule == 'Step':
@@ -300,10 +299,13 @@ class FSCILTrainer(Trainer):
         tqdm_gen = tqdm(trainloader)
 
         label = torch.arange(args.episode_way + args.low_way).repeat(args.episode_query)
-        label = label.type(torch.cuda.LongTensor)
+        # label = label.type(torch.cuda.LongTensor)
 
         for i, batch in enumerate(tqdm_gen, 1):
-            data, true_label = [_.cuda() for _ in batch]
+            if args.use_gpu:
+                data, true_label = [_.cuda() for _ in batch]
+            else:
+                data, true_label = [_ for _ in batch]
 
             k = args.episode_way * args.episode_shot
             proto, query = data[:k], data[k:]
@@ -318,7 +320,7 @@ class FSCILTrainer(Trainer):
             # random choose rotate degree
             proto_tmp, query_tmp = self.replace_to_rotate(proto_tmp, query_tmp)
 
-            model.module.mode = 'encoder'
+            model.mode = 'encoder'
             data = model(data)
             proto_tmp = model(proto_tmp)
             query_tmp = model(query_tmp)
@@ -341,7 +343,7 @@ class FSCILTrainer(Trainer):
             proto = proto.unsqueeze(0)
             query = query.unsqueeze(0)
 
-            logits = model.module._forward(proto, query)
+            logits = model._forward(proto, query)
 
             total_loss = F.cross_entropy(logits, label)
 

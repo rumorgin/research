@@ -1,23 +1,39 @@
-from .base import Trainer
-import os.path as osp
+import torch
 import torch.nn as nn
 from copy import deepcopy
-
-from .helper import *
+from .Network import MYNET
+# from .helper import *
 from utils import *
 from dataloader.data_utils import *
+from tqdm import tqdm
+import torch.nn.functional as F
+# from .micro_cluster import MicroCluster
 
-
-class FSCILTrainer(Trainer):
+class FSCILTrainer(object):
     def __init__(self, args):
-        super().__init__(args)
+        super().__init__()
         self.args = args
         self.set_save_path()
         self.args = set_up_datasets(self.args)
 
+        self.dt, self.ft = Averager(), Averager()
+        self.bt, self.ot = Averager(), Averager()
+        self.timer = Timer()
+
+        # train statistics
+        self.trlog = {}
+        self.trlog['train_loss'] = []
+        self.trlog['val_loss'] = []
+        self.trlog['test_loss'] = []
+        self.trlog['train_acc'] = []
+        self.trlog['val_acc'] = []
+        self.trlog['test_acc'] = []
+        self.trlog['max_acc_epoch'] = 0
+        self.trlog['max_acc'] = [0.0] * args.sessions
         self.model = MYNET(self.args, mode=self.args.base_mode)
-        # self.model = nn.DataParallel(self.model, list(range(self.args.num_gpu)))
-        if args.use_gpu == True:
+
+        # self.micro_cluster=MicroCluster()
+        if args.use_gpu:
             self.model = self.model.cuda()
 
         if self.args.model_dir is not None:
@@ -43,8 +59,7 @@ class FSCILTrainer(Trainer):
 
     def get_dataloader(self, session):
         if session == 0:
-            # trainset, trainloader, testloader = get_base_dataloader(self.args)
-            trainset, trainloader, testloader = self.get_base_dataloader_meta()
+            trainset, trainloader, testloader = get_base_dataloader_meta(self.args)
         else:
             trainset, trainloader, testloader = get_new_dataloader(self.args, session)
         return trainset, trainloader, testloader
@@ -103,19 +118,6 @@ class FSCILTrainer(Trainer):
                 result_list.append('Session {}, Test Best Epoch {},\nbest test Acc {:.4f}\n'.format(
                     session, self.trlog['max_acc_epoch'], self.trlog['max_acc'][session], ))
 
-                if not args.not_data_init:
-                    self.model.load_state_dict(self.best_model_dict)
-                    self.model = replace_base_fc(train_set, testloader.dataset.transform, self.model, args)
-                    best_model_dir = os.path.join(args.save_path, 'session' + str(session) + '_max_acc.pth')
-                    print('Replace the fc with average embedding, and save it to :%s' % best_model_dir)
-                    self.best_model_dict = deepcopy(self.model.state_dict())
-                    torch.save(dict(params=self.model.state_dict()), best_model_dir)
-
-                    self.model.mode = 'avg_cos'
-                    tsl, tsa = test(self.model, testloader, 0, args, session)
-                    if (tsa * 100) >= self.trlog['max_acc'][session]:
-                        self.trlog['max_acc'][session] = float('%.3f' % (tsa * 100))
-                        print('The new best test acc of base session={:.3f}'.format(self.trlog['max_acc'][session]))
 
 
             else:  # incremental learning sessions
@@ -179,3 +181,109 @@ class FSCILTrainer(Trainer):
         self.args.save_path = os.path.join('checkpoint', self.args.save_path)
         ensure_path(self.args.save_path)
         return None
+
+def base_train(model, trainloader, optimizer, scheduler, epoch, args):
+    tl = Averager()
+    ta = Averager()
+    model = model.train()
+    # standard classification for pretrain
+
+    label = torch.arange(args.episode_way).repeat(args.episode_query)
+    if args.use_gpu:
+        label = label.type(torch.cuda.LongTensor)
+    else:
+        label = label.type(torch.LongTensor)
+
+    tqdm_gen = tqdm(trainloader)
+    for i, batch in enumerate(tqdm_gen, 1):
+        if args.use_gpu:
+            data, true_label = [_.cuda() for _ in batch]
+        else:
+            data, true_label = [_ for _ in batch]
+
+        model.mode = 'encoder'
+        data = model(data)
+
+        model.mode = 'metric_classify'
+        logits = model(data)
+
+        total_loss = F.cross_entropy(logits, label)
+
+        acc = count_acc(logits, label)
+
+        lrc = scheduler.get_last_lr()[0]
+        tqdm_gen.set_description(
+            'Session 0, epo {}, lrc={:.4f},total loss={:.4f} acc={:.4f}'.format(epoch, lrc, total_loss.item(), acc))
+        tl.add(total_loss.item())
+        ta.add(acc)
+
+        optimizer.zero_grad()
+        total_loss.backward()
+        optimizer.step()
+    tl = tl.item()
+    ta = ta.item()
+    return tl, ta
+
+def test(model, testloader, epoch, args, session):
+    test_class = args.base_class + session * args.way
+    model = model.eval()
+    vl = Averager()
+    va = Averager()
+    with torch.no_grad():
+        tqdm_gen = tqdm(testloader)
+        for i, batch in enumerate(tqdm_gen, 1):
+            if args.use_gpu:
+                data, test_label = [_.cuda() for _ in batch]
+            else:
+                data, test_label = [_ for _ in batch]
+            model.mode = 'metric_classify'
+            logits = model(data)
+            loss = F.cross_entropy(logits, test_label)
+            acc = count_acc(logits, test_label)
+
+            vl.add(loss.item())
+            va.add(acc)
+
+        vl = vl.item()
+        va = va.item()
+    print('epo {}, test, loss={:.4f} acc={:.4f}'.format(epoch, vl, va))
+
+    return vl, va
+
+def replace_base_fc(trainset, transform, model, args):
+    # replace fc.weight with the embedding average of train data
+    model = model.eval()
+
+    trainloader = torch.utils.data.DataLoader(dataset=trainset, batch_size=128,
+                                              num_workers=args.num_workers, pin_memory=True, shuffle=False)
+    trainloader.dataset.transform = transform
+    embedding_list = []
+    label_list = []
+    # data_list=[]
+    with torch.no_grad():
+        for i, batch in enumerate(trainloader):
+            if args.use_gpu:
+                data, label = [_.cuda() for _ in batch]
+            else:
+                data, label = [_ for _ in batch]
+            model.module.mode = 'encoder'
+            embedding = model(data)
+
+            embedding_list.append(embedding.cpu())
+            label_list.append(label.cpu())
+    embedding_list = torch.cat(embedding_list, dim=0)
+    label_list = torch.cat(label_list, dim=0)
+
+    proto_list = []
+
+    for class_index in range(args.base_class):
+        data_index = (label_list == class_index).nonzero()
+        embedding_this = embedding_list[data_index.squeeze(-1)]
+        embedding_this = embedding_this.mean(0)
+        proto_list.append(embedding_this)
+
+    proto_list = torch.stack(proto_list, dim=0)
+
+    model.module.fc.weight.data[:args.base_class] = proto_list
+
+    return model
