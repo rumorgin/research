@@ -6,21 +6,23 @@ from models.resnet20_cifar import *
 from sklearn.preprocessing import LabelBinarizer
 
 class CVAE(nn.Module):
-    def __init__(self,input_dim=512,hidden_dim=400,class_num=60):
+    def __init__(self,input_dim=512,hidden_dim=400,variable_dim=20,class_num=60,training=True):
         super(CVAE, self).__init__()
 
         self.embedding = nn.Linear(input_dim+class_num, hidden_dim)
-        self.embedding_mu = nn.Linear(hidden_dim, 20)
-        self.embedding_var = nn.Linear(hidden_dim, 20)
-        self.fc3 = nn.Linear(30, hidden_dim)
+        self.embedding_mu = nn.Linear(hidden_dim, variable_dim)
+        self.embedding_var = nn.Linear(hidden_dim, variable_dim)
+        self.fc3 = nn.Linear(variable_dim+class_num, hidden_dim)
         self.fc4 = nn.Linear(hidden_dim, input_dim+class_num)
-
+        self.input_dim = input_dim
+        self.class_num = class_num
         self.lb = LabelBinarizer()
+        self.training = training
 
     # 将标签进行one-hot编码
     def to_categrical(self, y: torch.FloatTensor):
         y_n = y.numpy()
-        self.lb.fit(list(range(0, 10)))
+        self.lb.fit(list(range(0, self.class_num)))
         y_one_hot = self.lb.transform(y_n)
         floatTensor = torch.FloatTensor(y_one_hot)
         return floatTensor
@@ -48,7 +50,9 @@ class CVAE(nn.Module):
         h3 = F.relu(self.fc3(cat))
         return F.sigmoid(self.fc4(h3))
 
+    def generate(self, mu, logvar):
+
     def forward(self, x, y):
-        mu, logvar = self.encode(x.view(-1, 784), y)
+        mu, logvar = self.encode(x.view(-1, self.input_dim), y)
         z = self.reparameterize(mu, logvar)
         return self.decode(z, y), mu, logvar

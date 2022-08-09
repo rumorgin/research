@@ -26,7 +26,7 @@ class MYNET(nn.Module):
             self.num_features = 512
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
 
-        self.memory = nn.Parameter(torch.Tensor(self.args.num_classes, 2))
+        self.memory = torch.Tensor(self.args.num_classes, 2, 20)
         self.cvae = CVAE()
 
         self.fc = nn.Linear(self.num_features, self.args.num_classes, bias=False)
@@ -48,19 +48,34 @@ class MYNET(nn.Module):
         x = x.squeeze(-1).squeeze(-1)
         return x
 
-    def forward(self, input):
-        if self.mode == 'cos_classify':
-            input = self.forward_metric(input)
-            return input
+    def forward(self, input , label):
+        if self.mode == 'cvae_generator':
+            k = self.args.episode_way * self.args.episode_shot
+            support, query = input[:k], input[k:]
+            support_label, query_label = label[:k], label[k:]
+            support = support.view(self.args.episode_shot, self.args.episode_way, support.shape[-1])
+            query = query.view(self.args.episode_query, self.args.episode_way, query.shape[-1])
+            recon_batch, con, mu, logvar = self.cvae_gen(support, query, support_label, query_label)
+            proto_mu = mu.reshape(self.args.episode_shot,self.args.episode_way,-1).mean(0).squeeze()
+            proto_logvar=logvar.reshape(self.args.episode_shot,self.args.episode_way,-1).mean(0).squeeze()
+            label_id = support_label[:self.args.episode_way]
+            for i, id in enumerate(label_id):
+                self.memory[id,0]= proto_mu[i]
+                self.memory[id, 1] = proto_logvar[i]
+            return recon_batch, con, mu, logvar
         elif self.mode == 'encoder':
             input = self.encode(input)
             return input
         elif self.mode == 'metric_classify':
             k = self.args.episode_way * self.args.episode_shot
             support, query = input[:k], input[k:]
+            support_label, query_label = label[:k], label[k:]
+            mu=self.memory[support_label,0,:]
+            logvar=self.memory[support_label,1,:]
+            fake_support=self.cvae.reparameterize(mu,logvar)
             support = support.view(self.args.episode_shot, self.args.episode_way, support.shape[-1])
             query = query.view(self.args.episode_query, self.args.episode_way, query.shape[-1])
-            logits = self.metric_classify(support, query)
+            logits = self.metric_classify(support, query, support_label, query_label)
             return logits
         else:
             raise ValueError('Unknown mode')
@@ -76,6 +91,7 @@ class MYNET(nn.Module):
         num_class = support.shape[1]
         num_query = query.shape[0]*query.shape[1]#num of query*way
 
+
         proto = support.mean(dim=0)
         query = query.view(-1, emb_dim).unsqueeze(1)
 
@@ -85,6 +101,18 @@ class MYNET(nn.Module):
         logits=logits*self.args.temperature
 
         return logits
+
+    def cvae_gen(self,support,query, support_label, query_label):
+        recon_batch, mu, logvar = self.cvae(support, support_label)
+        #         print(recon_batch.shape) #[64, 794]
+        # 训练样本展平，在每个样本后面连接标签的one-hot向量
+        flat_data = support.view( support.shape[0] * support.shape[1],-1)
+        #         print(data.shape, flat_data.shape)
+        y_condition = self.cvae.to_categrical(support_label)
+        con = torch.cat((flat_data, y_condition), 1)
+
+        return recon_batch, con, mu, logvar
+
 
     def update_fc(self,dataloader,class_list,session):
         for batch in dataloader:

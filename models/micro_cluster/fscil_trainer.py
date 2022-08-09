@@ -202,12 +202,21 @@ def base_train(model, trainloader, optimizer, scheduler, epoch, args):
             data, true_label = [_ for _ in batch]
 
         model.mode = 'encoder'
-        data = model(data)
+        data = model(data,true_label)
+
+        model.mode = 'cvae_generator'
+        recon_batch, con, mu, logvar = model(data, true_label)
 
         model.mode = 'metric_classify'
-        logits = model(data)
+        logits = model(data,true_label)
 
-        total_loss = F.cross_entropy(logits, label)
+        classify_loss = F.cross_entropy(logits, label)
+
+        BCE = F.binary_cross_entropy(recon_batch, con, size_average=False)
+
+        KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
+
+        total_loss = classify_loss + BCE + KLD
 
         acc = count_acc(logits, label)
 
@@ -237,7 +246,7 @@ def test(model, testloader, epoch, args, session):
             else:
                 data, test_label = [_ for _ in batch]
             model.mode = 'metric_classify'
-            logits = model(data)
+            logits = model(data, test_label)
             loss = F.cross_entropy(logits, test_label)
             acc = count_acc(logits, test_label)
 
