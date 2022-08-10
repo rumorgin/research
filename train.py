@@ -18,7 +18,7 @@ def get_command_line_parser():
     parser.add_argument('-dataroot', type=str, default=DATA_DIR)
 
     # about pre-training
-    parser.add_argument('-epochs_base', type=int, default=100)
+    parser.add_argument('-epochs_base', type=int, default=1)  ## for code test set to 1 default: 100
     parser.add_argument('-epochs_new', type=int, default=100)
     parser.add_argument('-lr_base', type=float, default=0.1)
     parser.add_argument('-lr_new', type=float, default=0.1)
@@ -41,7 +41,7 @@ def get_command_line_parser():
                         choices=['ft_dot', 'ft_cos', 'avg_cos']) # ft_dot means using linear classifier, ft_cos means using cosine classifier, avg_cos means using average data embedding and cosine classifier
 
     # for episode learning
-    parser.add_argument('-train_episode', type=int, default=50)
+    parser.add_argument('-train_episode', type=int, default=1) ## for code test set to 1 default: 50
     parser.add_argument('-episode_shot', type=int, default=10)
     parser.add_argument('-episode_way', type=int, default=5)
     parser.add_argument('-episode_query', type=int, default=10)

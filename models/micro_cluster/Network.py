@@ -66,16 +66,25 @@ class MYNET(nn.Module):
         elif self.mode == 'encoder':
             input = self.encode(input)
             return input
-        elif self.mode == 'metric_classify':
+        elif self.mode == 'train_classifier':
             k = self.args.episode_way * self.args.episode_shot
             support, query = input[:k], input[k:]
             support_label, query_label = label[:k], label[k:]
-            mu=self.memory[support_label,0,:]
-            logvar=self.memory[support_label,1,:]
-            fake_support=self.cvae.reparameterize(mu,logvar)
+            proto_label=support_label[:self.args.episode_way]
+            mu=self.memory[proto_label,0,:]
+            logvar=self.memory[proto_label,1,:]
+            fake_support=self.cvae.generate(mu,logvar,proto_label,shot=self.args.episode_shot)[:,:self.num_features]
+            all_support=torch.cat((fake_support,support),dim=0)
+            all_support = all_support.view(self.args.episode_shot*2, self.args.episode_way, support.shape[-1])
+            query = query.view(self.args.episode_query, self.args.episode_way, query.shape[-1])
+            logits = self.metric_classify(all_support, query)
+            return logits
+        elif self.mode == 'test_classifier':
+            k = self.args.episode_way * self.args.episode_shot
+            support, query = input[:k], input[k:]
             support = support.view(self.args.episode_shot, self.args.episode_way, support.shape[-1])
             query = query.view(self.args.episode_query, self.args.episode_way, query.shape[-1])
-            logits = self.metric_classify(support, query, support_label, query_label)
+            logits = self.metric_classify(support, query)
             return logits
         else:
             raise ValueError('Unknown mode')

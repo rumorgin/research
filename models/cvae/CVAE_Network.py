@@ -50,8 +50,16 @@ class CVAE(nn.Module):
         h3 = F.relu(self.fc3(cat))
         return F.sigmoid(self.fc4(h3))
 
-    def generate(self, mu, logvar):
-
+    def generate(self, mu, logvar, y, shot):
+        std = torch.exp(0.5 * logvar).repeat(shot,1)
+        mu = mu.repeat(shot,1)
+        y = y.repeat(shot)
+        eps = torch.randn_like(std)
+        z = eps.mul(std).add(mu)
+        y_c = self.to_categrical(y)
+        cat = torch.cat((z, y_c), 1)
+        h3 = F.relu(self.fc3(cat))
+        return F.sigmoid(self.fc4(h3))
     def forward(self, x, y):
         mu, logvar = self.encode(x.view(-1, self.input_dim), y)
         z = self.reparameterize(mu, logvar)

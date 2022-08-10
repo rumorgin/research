@@ -207,7 +207,7 @@ def base_train(model, trainloader, optimizer, scheduler, epoch, args):
         model.mode = 'cvae_generator'
         recon_batch, con, mu, logvar = model(data, true_label)
 
-        model.mode = 'metric_classify'
+        model.mode = 'train_classifier'
         logits = model(data,true_label)
 
         classify_loss = F.cross_entropy(logits, label)
@@ -245,7 +245,9 @@ def test(model, testloader, epoch, args, session):
                 data, test_label = [_.cuda() for _ in batch]
             else:
                 data, test_label = [_ for _ in batch]
-            model.mode = 'metric_classify'
+            model.mode = 'encoder'
+            data = model(data, test_label)
+            model.mode = 'test_classifier'
             logits = model(data, test_label)
             loss = F.cross_entropy(logits, test_label)
             acc = count_acc(logits, test_label)
